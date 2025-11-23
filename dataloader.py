@@ -23,7 +23,7 @@ DEFAULT_DATA_ROOTS = {
 	"pothole": Path("/dtu/datasets1/02516/potholes"),
 }
 
-IMAGE_SIZE = (252, 252)
+IMAGE_SIZE = (256, 256)
 
 def resize_image(image, resize_to, output_type='numpy', interpolation=transforms.InterpolationMode.BILINEAR, antialias=True):
     """
@@ -241,11 +241,218 @@ def export_proposals_to_json(proposals, output_json_file):
     with open(output_json_file, 'w') as json_file:
         json.dump(proposals_dict, json_file, indent=4)
 
-# Generating image proposal
-images, annotations_dict_list = read_data(DEFAULT_DATA_ROOTS["pothole"], IMAGE_SIZE)
-selective_search_proposals, edge_box_proposals = get_proposals_for_images(images)
-export_proposals_to_json(selective_search_proposals, 'selective_search_proposals.json')
-export_proposals_to_json(edge_box_proposals, 'edge_box_proposals.json')
+def load_proposals_from_json(json_file):
+    """Load proposals from JSON file."""
+    with open(json_file, 'r') as f:
+        proposals_dict = json.load(f)
+    return proposals_dict
+
+def calculate_iou(box1, box2):
+    """
+    Calculate Intersection over Union (IoU) between two bounding boxes.
+    
+    Args:
+        box1: dict with keys 'xmin', 'ymin', 'xmax', 'ymax' or 'x_min', 'y_min', 'x_max', 'y_max'
+        box2: dict with keys 'xmin', 'ymin', 'xmax', 'ymax' or 'x_min', 'y_min', 'x_max', 'y_max'
+    
+    Returns:
+        IoU score (float between 0 and 1)
+    """
+    # Handle different key formats
+    x1_min = box1.get('xmin', box1.get('x_min'))
+    y1_min = box1.get('ymin', box1.get('y_min'))
+    x1_max = box1.get('xmax', box1.get('x_max'))
+    y1_max = box1.get('ymax', box1.get('y_max'))
+    
+    x2_min = box2.get('xmin', box2.get('x_min'))
+    y2_min = box2.get('ymin', box2.get('y_min'))
+    x2_max = box2.get('xmax', box2.get('x_max'))
+    y2_max = box2.get('ymax', box2.get('y_max'))
+    
+    # Calculate intersection
+    inter_xmin = max(x1_min, x2_min)
+    inter_ymin = max(y1_min, y2_min)
+    inter_xmax = min(x1_max, x2_max)
+    inter_ymax = min(y1_max, y2_max)
+    
+    inter_width = max(0, inter_xmax - inter_xmin)
+    inter_height = max(0, inter_ymax - inter_ymin)
+    intersection = inter_width * inter_height
+    
+    # Calculate union
+    box1_area = (x1_max - x1_min) * (y1_max - y1_min)
+    box2_area = (x2_max - x2_min) * (y2_max - y2_min)
+    union = box1_area + box2_area - intersection
+    
+    # Avoid division by zero
+    if union == 0:
+        return 0.0
+    
+    return intersection / union
+
+class PotholeProposalDataset(Dataset):
+    """
+    PyTorch Dataset for pothole detection using region proposals.
+    
+    Args:
+        data_root: Path to the dataset root directory
+        proposal_type: Either 'selective_search' or 'edge_box'
+        proposal_json: Path to the JSON file containing proposals
+        image_size: Tuple (height, width) to resize cropped regions to
+        iou_threshold: IoU threshold to classify a proposal as pothole (default: 0.7)
+        positive_ratio: Target ratio of positive (pothole) samples (default: 0.25)
+        transform: Optional torchvision transforms to apply
+        seed: Random seed for reproducibility
+    """
+    
+    def __init__(
+        self,
+        data_root: Path,
+        proposal_type: str = 'selective_search',
+        proposal_json: Optional[str] = None,
+        image_size: Tuple[int, int] = (256, 256),
+        iou_threshold: float = 0.7,
+        positive_ratio: float = 0.25,
+        transform: Optional[Callable] = None,
+        seed: int = 42
+    ):
+        self.data_root = Path(data_root)
+        self.proposal_type = proposal_type
+        self.image_size = image_size
+        self.iou_threshold = iou_threshold
+        self.positive_ratio = positive_ratio
+        self.transform = transform
+        
+        random.seed(seed)
+        np.random.seed(seed)
+        
+        # Load proposals
+        if proposal_json is None:
+            if proposal_type == 'selective_search':
+                proposal_json = 'selective_search_proposals.json'
+            elif proposal_type == 'edge_box':
+                proposal_json = 'edge_box_proposals.json'
+            else:
+                raise ValueError(f"Unknown proposal_type: {proposal_type}")
+        
+        self.proposals_dict = load_proposals_from_json(proposal_json)
+        
+        # Load images and annotations
+        self.images, self.annotations = read_data(self.data_root, image_size=None)
+        
+        # Build dataset samples
+        self._build_dataset()
+    
+    def _build_dataset(self):
+        """Build the dataset by pairing proposals with labels."""
+        positive_samples = []
+        negative_samples = []
+        
+        for img_idx, (image, annotation) in enumerate(zip(self.images, self.annotations)):
+            filename = annotation['filename']
+            gt_bboxes = annotation['bboxes']
+            
+            # Get proposals for this image
+            proposals = self.proposals_dict.get(filename, [])
+            
+            # Scale proposals to match original image dimensions
+            orig_width = annotation['image dimension']['width']
+            orig_height = annotation['image dimension']['height']
+            
+            for proposal in proposals:
+                # Calculate max IoU with all ground truth boxes
+                max_iou = 0.0
+                for gt_bbox in gt_bboxes:
+                    # Scale proposal to original image dimensions
+                    scaled_proposal = {
+                        'x_min': int(proposal['x_min'] * orig_width / self.images[img_idx].shape[1]),
+                        'y_min': int(proposal['y_min'] * orig_height / self.images[img_idx].shape[0]),
+                        'x_max': int(proposal['x_max'] * orig_width / self.images[img_idx].shape[1]),
+                        'y_max': int(proposal['y_max'] * orig_height / self.images[img_idx].shape[0])
+                    }
+                    iou = calculate_iou(scaled_proposal, gt_bbox)
+                    max_iou = max(max_iou, iou)
+                
+                # Classify as positive or negative
+                label = 1 if max_iou >= self.iou_threshold else 0
+                
+                sample = {
+                    'image_idx': img_idx,
+                    'proposal': proposal,
+                    'label': label,
+                    'iou': max_iou
+                }
+                
+                if label == 1:
+                    positive_samples.append(sample)
+                else:
+                    negative_samples.append(sample)
+        
+        # Balance the dataset according to positive_ratio
+        num_positive = len(positive_samples)
+        num_negative_needed = int(num_positive * (1 - self.positive_ratio) / self.positive_ratio)
+        
+        # Sample negatives
+        if num_negative_needed < len(negative_samples):
+            negative_samples = random.sample(negative_samples, num_negative_needed)
+        
+        # Combine and shuffle
+        self.samples = positive_samples + negative_samples
+        random.shuffle(self.samples)
+        
+        print(f"Dataset built: {len(positive_samples)} positive, {len(negative_samples)} negative samples")
+        print(f"Actual positive ratio: {len(positive_samples) / len(self.samples):.2%}")
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        image_idx = sample['image_idx']
+        proposal = sample['proposal']
+        label = sample['label']
+        
+        # Get the full image
+        image = self.images[image_idx]
+        
+        # Crop the proposal region
+        x_min = int(proposal['x_min'])
+        y_min = int(proposal['y_min'])
+        x_max = int(proposal['x_max'])
+        y_max = int(proposal['y_max'])
+        
+        # Ensure valid crop coordinates
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        x_max = min(image.shape[1], x_max)
+        y_max = min(image.shape[0], y_max)
+        
+        cropped_region = image[y_min:y_max, x_min:x_max]
+        
+        # Convert to PIL Image for resizing
+        cropped_pil = Image.fromarray(cropped_region)
+        
+        # Resize to target size with bilinear interpolation
+        resized_region = resize_image(
+            cropped_pil, 
+            self.image_size, 
+            output_type='tensor',
+            interpolation=InterpolationMode.BILINEAR,
+            antialias=True
+        )
+        
+        # Apply additional transforms if provided
+        if self.transform:
+            resized_region = self.transform(resized_region)
+        
+        return resized_region, torch.tensor(label, dtype=torch.long)
+
+# Generating image proposal (commented out to prevent auto-execution)
+# Uncomment these lines to generate proposals
+# images, annotations_dict_list = read_data(DEFAULT_DATA_ROOTS["pothole"], IMAGE_SIZE)
+# selective_search_proposals, edge_box_proposals = get_proposals_for_images(images)
+# export_proposals_to_json(selective_search_proposals, 'selective_search_proposals.json')
+# export_proposals_to_json(edge_box_proposals, 'edge_box_proposals.json')
 
 
 
