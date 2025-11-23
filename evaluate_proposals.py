@@ -18,7 +18,7 @@ def main():
     proposal_sets = [(eb_proposals, "edge_box_proposals_labeled"),
                      (ss_proposals, "selective_search_proposals_labeled"),
                      ]
-    resized_h, resized_w = 252, 252
+    resized_h, resized_w = 256, 256
     iou_threshold = 0.5
     results = defaultdict(list)
 
