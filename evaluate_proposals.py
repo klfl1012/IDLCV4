@@ -65,5 +65,8 @@ def main():
         with open(f"Proposal Sample/{results_file_name}.json", "w") as f:
             json.dump(results, f, indent=4)
 
+        # filter labeled proposals
+        filter_proposals(json_path=f"Proposal Sample/{results_file_name}.json")
+        
 if __name__ == "__main__":
     main()
