@@ -5,6 +5,7 @@ from pathlib import Path
 import lightning as l
 import torch
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader, random_split
 
 from dataloader import DEFAULT_DATA_ROOTS, PotholeProposalDataset
@@ -52,6 +53,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-test", action="store_true", help="Skip running the test loop after training")
 
     parser.add_argument("--list-models", action="store_true", help="Print available models and exit")
+
+    # Early stopping is always enabled; only patience is configurable
+    parser.add_argument("--early-stopping-patience", type=int, default=5, help="Epochs with no val/loss improvement before stopping")
 
     return parser.parse_args()
 
@@ -140,6 +144,13 @@ def main() -> None:
     csv_logger = CSVLogger(save_dir=args.default_root_dir, name=args.logger_name)
     tb_logger = TensorBoardLogger(save_dir=args.default_root_dir, name=f"{args.logger_name}_tb")
 
+    early_stopping = EarlyStopping(
+        monitor="val/loss",
+        mode="min",
+        patience=args.early_stopping_patience,
+        min_delta=0.0,
+    )
+
     trainer = l.Trainer(
         max_epochs=args.max_epochs,
         accelerator=args.accelerator,
@@ -147,6 +158,7 @@ def main() -> None:
         precision=args.precision,
         default_root_dir=args.default_root_dir,
         logger=[csv_logger, tb_logger],
+        callbacks=[early_stopping],
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.resume_from_checkpoint)

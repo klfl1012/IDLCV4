@@ -167,7 +167,11 @@ class BaseModel(l.LightningModule):
         }
         default_optim = {"lr": 1e-3, "weight_decay": 0.0}
         self.optimizer_config = {**default_optim, **(optimizer_config or {})}
-        self._setup_default_metrics(metric_config or {})
+        # Detection metrics (e.g., COCO mAP) are currently disabled to
+        # keep the training loop simple and avoid extra dependencies.
+        # You can re-enable this once the detection target formatting
+        # is wired up correctly.
+        # self._setup_default_metrics(metric_config or {})
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
@@ -209,6 +213,15 @@ class BaseModel(l.LightningModule):
             value = metric.compute()
             if isinstance(value, dict):
                 for sub_key, sub_value in value.items():
+                    # Only log scalar-like values; skip vectors, empty tensors, etc.
+                    is_scalar = False
+                    if isinstance(sub_value, (int, float)):
+                        is_scalar = True
+                    elif isinstance(sub_value, torch.Tensor) and sub_value.ndim == 0:
+                        is_scalar = True
+                    if not is_scalar:
+                        continue
+
                     composite_name = f"{name}.{sub_key}"
                     log_name = f"{stage}/{composite_name}"
                     self.log(
@@ -264,8 +277,10 @@ class BaseModel(l.LightningModule):
         )
 
     def _setup_default_metrics(self, metric_config: dict[str, Any]) -> None:
-        if self.task_type == "detection":
-            self._configure_detection_metrics(metric_config)
+        # Temporarily disabled: detection metrics are not wired up yet.
+        # Left here for future use when full detection training targets
+        # (boxes + labels per image) are available.
+        return
 
     def _configure_detection_metrics(self, metric_config: dict[str, Any]) -> None:
         include_train = metric_config.get("include_train_metrics", False)
@@ -277,7 +292,6 @@ class BaseModel(l.LightningModule):
         metric_kwargs = {
             "box_format": metric_config.get("box_format", "xyxy"),
             "iou_type": metric_config.get("iou_type", "bbox"),
-            "compute_on_step": False,
         }
         if metric_config.get("metric_iou_thresholds") is not None:
             metric_kwargs["iou_thresholds"] = metric_config["metric_iou_thresholds"]
@@ -298,7 +312,6 @@ class BaseModel(l.LightningModule):
 
 
 class DetectionCNN(BaseModel):
-    """Compact CNN backbone with simple detection heads and integrated logging."""
 
     def __init__(
         self,
