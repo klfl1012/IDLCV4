@@ -1,3 +1,7 @@
+import json
+import random
+
+
 def calc_iou(proposal: dict, gt_box: dict, scale_x: float, scale_y: float):
     """ 
     Calculates the intersection over union (IoU) between the proposed bounding box and a ground truth bounding box. 
@@ -37,3 +41,52 @@ def calc_iou(proposal: dict, gt_box: dict, scale_x: float, scale_y: float):
     iou = intersection / union
 
     return iou
+
+
+def filter_proposals(json_path: str, p=0.5, seed=71225) -> None:
+    """
+    Filters the initially labeled proposals such that a proportion of p proposals are labeled as a pothole.
+
+    Parameters:
+    - json_path:    Path to json file containing the initially labeled proposals.
+    - p:            Proportion of proposals that should be labeled as pothole. 
+    - seed:         Seed for random.sample for reproducibility purposes.
+    """
+    # setting seed
+    random.seed(seed)
+
+    # loading the JSON file
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    filtered_proposals = {}
+
+    for image_name, proposals in data.items():
+        # split proposals according to label
+        potholes = [p for p in proposals if p["label"] == "pothole"]
+        background = [p for p in proposals if p["label"] == "background"]
+
+        n_potholes = len(potholes)
+
+        # if no potholes exist, keep at least one background
+        if n_potholes == 0:
+            filtered_proposals[image_name] = background[:1]
+            continue
+
+        # required number of background samples
+        N_b = int(n_potholes * (1 - p) / p)
+
+        # sample background proposals
+        sampled_background = random.sample(background, min(N_b, len(background)))
+
+        # combine
+        combined = potholes + sampled_background
+        random.shuffle(combined)
+
+        filtered_proposals[image_name] = combined
+
+    # save back to same file
+    with open(json_path, "w") as f:
+        json.dump(filtered_proposals, f, indent=4)
+
+    print(f"Filtered proposals saved to {json_path}")
