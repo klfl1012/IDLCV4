@@ -134,9 +134,6 @@ def _unfreeze_conv_bn_pair(
                 p.requires_grad = True
             if freeze_bn_running_stats and isinstance(bn_layer, (nn.BatchNorm2d, nn.BatchNorm3d)):
                 bn_layer.eval()
-        print(f"[UNFREEZE] Unfroze conv: {conv_layer.__class__.__name__}, "
-              f"BN: {bn_layer.__class__.__name__ if bn_layer is not None else 'None'}"
-              f"{' (BN running stats frozen)' if freeze_bn_running_stats else ''}")
 
 
 class BaseModel(l.LightningModule):
