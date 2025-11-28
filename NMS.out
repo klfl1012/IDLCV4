@@ -1,0 +1,94 @@
+Using device: cuda
+Dataset built: 43 positive, 129 negative samples
+Actual positive ratio: 25.00%
+Test dataset: 25 samples
+Model loaded successfully from checkpoint: logs/lightning_logs/detcnn_eb_vgg/version_0/checkpoints/epoch=6-step=98.ckpt
+Total detections after NMS: 25
+0: Box=[0.5151400566101074, 0.4869433343410492, 0.48364076018333435, 0.5123203992843628], Score=0.313, Label=0
+1: Box=[0.5147265791893005, 0.487163245677948, 0.48374396562576294, 0.5123022198677063], Score=0.313, Label=0
+2: Box=[0.5149030685424805, 0.4871184229850769, 0.48376622796058655, 0.5123485922813416], Score=0.313, Label=0
+3: Box=[0.5147721171379089, 0.48745766282081604, 0.48385077714920044, 0.5126713514328003], Score=0.312, Label=0
+4: Box=[0.5152959823608398, 0.487120121717453, 0.48419731855392456, 0.5130814909934998], Score=0.315, Label=0
+5: Box=[0.5151677131652832, 0.4871886968612671, 0.4836316704750061, 0.5124785304069519], Score=0.313, Label=0
+6: Box=[0.5147847533226013, 0.4872000217437744, 0.48425936698913574, 0.512718915939331], Score=0.313, Label=0
+7: Box=[0.5152576565742493, 0.48695680499076843, 0.4835977256298065, 0.5123053789138794], Score=0.313, Label=0
+8: Box=[0.5153374075889587, 0.4869198203086853, 0.48353350162506104, 0.5123361945152283], Score=0.313, Label=0
+9: Box=[0.5151249170303345, 0.48700281977653503, 0.4835888147354126, 0.5122557282447815], Score=0.313, Label=0
+10: Box=[0.5154989361763, 0.48664650321006775, 0.4834405481815338, 0.5120877623558044], Score=0.313, Label=0
+11: Box=[0.5145450234413147, 0.4876503348350525, 0.4839581847190857, 0.5125710964202881], Score=0.312, Label=0
+12: Box=[0.5150928497314453, 0.48714908957481384, 0.48365816473960876, 0.5124474763870239], Score=0.313, Label=0
+13: Box=[0.5148263573646545, 0.4871481955051422, 0.4836898446083069, 0.5122279524803162], Score=0.312, Label=0
+14: Box=[0.5147345662117004, 0.487094908952713, 0.4837460219860077, 0.5121862292289734], Score=0.313, Label=0
+15: Box=[0.5149590969085693, 0.4871283769607544, 0.4837579131126404, 0.5122768878936768], Score=0.313, Label=0
+16: Box=[0.5149180889129639, 0.48691242933273315, 0.4836171269416809, 0.5120775699615479], Score=0.313, Label=0
+17: Box=[0.5152270793914795, 0.48695695400238037, 0.4835534691810608, 0.5123082399368286], Score=0.313, Label=0
+18: Box=[0.5152513384819031, 0.4868800938129425, 0.4835423529148102, 0.5122362375259399], Score=0.313, Label=0
+19: Box=[0.515005350112915, 0.4868345856666565, 0.4835343360900879, 0.5124775767326355], Score=0.313, Label=0
+20: Box=[0.5151645541191101, 0.48702916502952576, 0.4836178123950958, 0.5123765468597412], Score=0.313, Label=0
+21: Box=[0.5151000618934631, 0.4874611496925354, 0.4837277829647064, 0.512761116027832], Score=0.312, Label=0
+22: Box=[0.5150001645088196, 0.48712408542633057, 0.48366686701774597, 0.5124073028564453], Score=0.313, Label=0
+23: Box=[0.5159849524497986, 0.48619407415390015, 0.4832676947116852, 0.511911153793335], Score=0.315, Label=0
+24: Box=[0.5152881741523743, 0.4869370758533478, 0.48371708393096924, 0.5124213099479675], Score=0.313, Label=0
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@hpc.dtu.dk>
+Subject: Job 27198215: <eval_prop> in cluster <dcc> Done
+
+Job <eval_prop> was submitted from host <hpclogin1> by user <s252731> in cluster <dcc> at Thu Nov 27 20:53:44 2025
+Job was executed on host(s) <4*n-62-18-13>, in queue <c02516>, as user <s252731> in cluster <dcc> at Thu Nov 27 20:53:44 2025
+</zhome/1b/0/222796> was used as the home directory.
+</zhome/1b/0/222796/IDLCV4> was used as the working directory.
+Started at Thu Nov 27 20:53:44 2025
+Terminated at Thu Nov 27 20:54:01 2025
+Results reported at Thu Nov 27 20:54:01 2025
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/sh
+### ------------- specify queue name ----------------
+#BSUB -q c02516
+### ------------- specify gpu request----------------
+#BSUB -gpu "num=1:mode=exclusive_process"
+### ------------- specify job name ----------------
+#BSUB -J eval_prop
+### ------------- specify number of cores ----------------
+#BSUB -n 4
+#BSUB -R "span[hosts=1]"
+
+#BSUB -R "rusage[mem=20GB]"
+
+### ------------- specify wall-clock time (max allowed is 12:00)---------------- 
+#BSUB -W 08:00
+
+#BSUB -o OUTPUT_FILE%J.out
+#BSUB -e OUTPUT_FILE%J.err
+
+source venv_lightning/bin/activate
+python eval.py
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   14.32 sec.
+    Max Memory :                                 758 MB
+    Average Memory :                             758.00 MB
+    Total Requested Memory :                     81920.00 MB
+    Delta Memory :                               81162.00 MB
+    Max Swap :                                   -
+    Max Processes :                              4
+    Max Threads :                                9
+    Run time :                                   18 sec.
+    Turnaround time :                            17 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <OUTPUT_FILE27198215.err> for stderr output of this job.
+
