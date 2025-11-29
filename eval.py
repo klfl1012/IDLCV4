@@ -52,8 +52,10 @@ print(f"Using device: {device}")
 dataset = PotholeProposalDataset(
     data_root=Path(DEFAULT_DATA_ROOTS.get("pothole", "./data")),
     proposal_type="edge_box",  # or "selective_search" if needed
-    proposal_json="Proposal Sample/edge_box_proposals_all.json",
+    proposal_json="proposals/edge_box_proposals_all.json",
     image_size=(256, 256),
+    iou_threshold=0.5,
+    positive_ratio=0.25
 )
 
 # Check label distribution in the dataset
@@ -69,7 +71,7 @@ print()
 test_loader = DataLoader(dataset, batch_size=8, shuffle=False, num_workers=4, pin_memory=True)
 print(f"Evaluating on full dataset: {len(dataset)} samples")
 
-checkpoint_path = "logs/lightning_logs/detcnn_eb_vgg/version_0/checkpoints/epoch=6-step=98.ckpt"
+checkpoint_path = "lolologs/detcnn_eb_vgg_trallalalleolaltlalt/version_0/checkpoints/epoch=7-step=936.ckpt"
 
 spec = resolve_model("detection_cnn")
 model = spec.model_class.load_from_checkpoint(checkpoint_path, **spec.default_params)
@@ -94,13 +96,42 @@ with torch.no_grad():
         images = images.to(device)
 
         outputs = model(images)
-        logits = outputs["logits"]
+        # Support both dict-based outputs and the classification-only tensor output
+        if isinstance(outputs, dict):
+            logits = outputs.get("logits")
+        else:
+            logits = outputs
+
+        if logits is None:
+            raise RuntimeError("Model did not return logits. Expected tensor or dict with key 'logits'.")
+
+        # Debug: always print logits shape/type for diagnosis (matches `model.py` return)
+        # try:
+        #     print(f"[EVAL] logits type={type(logits)}, shape={getattr(logits, 'shape', 'n/a')}")
+        # except Exception:
+        #     pass
 
         probs = torch.softmax(logits, dim=-1)
         scores = probs[..., 1]  # class 1 = pothole
         
         # Process each sample in the batch
         for b in range(images.size(0)):
+
+
+
+
+
+
+            # keep_idx = apply_nms(b_boxes, b_scores, iou_threshold=0.5)
+
+
+
+
+
+
+
+
+
             # Handle different output shapes
             if scores.dim() == 1:
                 # Single score per sample

@@ -8,10 +8,8 @@ import torch.nn as nn
 import lightning as l
 from torchvision import models
 from torchmetrics import Metric
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
+from torchmetrics import Accuracy, Precision, Recall
 
-
-    
 def _load_vgg_backbone(
     *,
     target_convs: Sequence[nn.Conv2d],
@@ -84,6 +82,15 @@ def _load_vgg_backbone(
             if matched_conv.bias is not None and conv.bias is not None:
                 conv.bias.copy_(matched_conv.bias)
 
+        # Logging which VGG layer was used to initialise this target conv
+        try:
+            print(
+                f"[VGG_COPY] target_idx={idx} target_conv_out={conv.out_channels} target_conv_in={conv.in_channels} "
+                f"<- source_conv_shape={tuple(matched_conv.weight.shape)}"
+            )
+        except Exception:
+            pass
+
         if bn_layer is not None:
             matched_bn = _match_bn(matched_conv)
             if matched_bn is None:
@@ -101,6 +108,15 @@ def _load_vgg_backbone(
                     running_mean.copy_(matched_bn.running_mean)
                 if isinstance(running_var, torch.Tensor) and matched_bn.running_var is not None:
                     running_var.copy_(matched_bn.running_var)
+
+            # Log BN mapping
+            try:
+                print(
+                    f"[VGG_COPY] target_bn for target_idx={idx} target_bn_shape={(getattr(bn_layer,'weight').numel() if getattr(bn_layer,'weight',None) is not None else 'None')} "
+                    f"<- source_bn_shape={(getattr(matched_bn,'weight').numel() if getattr(matched_bn,'weight',None) is not None else 'None')}"
+                )
+            except Exception:
+                pass
 
     if freeze_backbone:
         for conv, bn_layer in zip(target_convs, target_bns):
@@ -135,6 +151,13 @@ def _unfreeze_conv_bn_pair(
             if freeze_bn_running_stats and isinstance(bn_layer, (nn.BatchNorm2d, nn.BatchNorm3d)):
                 bn_layer.eval()
 
+    if not freeze_bn_running_stats:
+        print(f"[UNFREEZE] Unfroze CONV: {conv_layer.__class__.__name__},\n"
+              f"[UNFREEZE] Unfroze BN: {bn_layer.__class__.__name__ if bn_layer is not None else 'None'}")
+
+    else: 
+        print(f"[FROZEN] Copied weights and froze BN running stats for CONV: {conv_layer.__class__.__name__},\n,"
+              f"[FROZEN] Copied weights and froze BN running stats for BN: {bn_layer.__class__.__name__ if bn_layer is not None else 'None'}")
 
 class BaseModel(l.LightningModule):
     """Base Lightning module that centralizes metric registration and logging."""
@@ -280,32 +303,10 @@ class BaseModel(l.LightningModule):
         return
 
     def _configure_detection_metrics(self, metric_config: dict[str, Any]) -> None:
-        include_train = metric_config.get("include_train_metrics", False)
-        prog_bar_defaults = {"val": {"map.map"}, "test": {"map.map"}}
-        custom_prog_bar = {
-            stage: set(keys)
-            for stage, keys in (metric_config.get("prog_bar_keys") or {}).items()
-        }
-        metric_kwargs = {
-            "box_format": metric_config.get("box_format", "xyxy"),
-            "iou_type": metric_config.get("iou_type", "bbox"),
-        }
-        if metric_config.get("metric_iou_thresholds") is not None:
-            metric_kwargs["iou_thresholds"] = metric_config["metric_iou_thresholds"]
-
-        def _factory() -> MeanAveragePrecision:
-            return MeanAveragePrecision(**metric_kwargs)
-
-        stage_metrics: dict[str, dict[str, Metric]] = {
-            "val": {"map": _factory()},
-            "test": {"map": _factory()},
-        }
-        if include_train:
-            stage_metrics["train"] = {"map": _factory()}
-
-        for stage, metrics in stage_metrics.items():
-            prog_bar_keys = custom_prog_bar.get(stage, prog_bar_defaults.get(stage, set()))
-            self.register_metrics(stage, metrics, prog_bar_keys=prog_bar_keys)
+        # Detection metrics (COCO mAP) are intentionally disabled here.
+        # Keep this method as a no-op until detection targets (boxes+labels)
+        # are fully wired up in the dataset and training loop.
+        return
 
 
 class DetectionCNN(BaseModel):
@@ -315,17 +316,14 @@ class DetectionCNN(BaseModel):
         num_classes: int = 2,
         *,
         in_channels: int = 3,
-        num_queries: int = 64,
         pretrained_vgg: bool = False,
         train_backbone: bool = True,
         vgg_variant: str = "vgg16_bn",
         dropout_p: float = 0.2,
         activation: str = "silu",
-        norm_type: str = "batch",
         base_channels: int = 64,
         include_train_metrics: bool = False,
         metric_iou_thresholds: Optional[Sequence[float]] = None,
-        box_format: str = "xyxy",
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
         loss_function: str = "cross_entropy",
@@ -333,7 +331,6 @@ class DetectionCNN(BaseModel):
         metric_config = {
             "include_train_metrics": include_train_metrics,
             "metric_iou_thresholds": metric_iou_thresholds,
-            "box_format": box_format,
         }
         optimizer_config = {"lr": learning_rate, "weight_decay": weight_decay}
         super().__init__(
@@ -342,7 +339,6 @@ class DetectionCNN(BaseModel):
             optimizer_config=optimizer_config,
         )
         self.num_classes = num_classes
-        self.num_queries = num_queries
         self.loss_function = loss_function.lower()
         if self.loss_function != "cross_entropy":
             raise ValueError("DetectionCNN currently supports only 'cross_entropy' loss.")
@@ -353,30 +349,32 @@ class DetectionCNN(BaseModel):
             if pretrained_vgg
             else [base_channels, base_channels * 2, base_channels * 4]
         )
+        
+        def _conv_block(conv: nn.Module, norm: nn.Module) -> nn.Sequential:
+            return nn.Sequential(conv, norm, act_cls(), nn.MaxPool2d(2), nn.Dropout2d(p=dropout_p))
+        
         self.feature_dim = widths[-1]
 
         # Backbone blocks
         self.conv1 = nn.Conv2d(in_channels, widths[0], kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(widths[0]) if norm_type == "batch" else nn.GroupNorm(32, widths[0])
+        # Use BatchNorm only (remove GroupNorm/LayerNorm support)
+        self.bn1 = nn.BatchNorm2d(widths[0])
         self.conv2 = nn.Conv2d(widths[0], widths[1], kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(widths[1]) if norm_type == "batch" else nn.GroupNorm(32, widths[1])
+        self.bn2 = nn.BatchNorm2d(widths[1])
         self.conv3 = nn.Conv2d(widths[1], widths[2], kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(widths[2]) if norm_type == "batch" else nn.GroupNorm(32, widths[2])
+        self.bn3 = nn.BatchNorm2d(widths[2])
 
-        def conv_block(conv: nn.Module, norm: nn.Module) -> nn.Sequential:
-            return nn.Sequential(conv, norm, act_cls(), nn.MaxPool2d(2), nn.Dropout2d(p=dropout_p))
 
         self.features = nn.Sequential(
-            conv_block(self.conv1, self.bn1),
-            conv_block(self.conv2, self.bn2),
+            _conv_block(self.conv1, self.bn1),
+            _conv_block(self.conv2, self.bn2),
             nn.Sequential(self.conv3, self.bn3, act_cls()),
         )
         self.spatial_pool = nn.AdaptiveAvgPool2d(1)
         self.head_dropout = nn.Dropout(p=dropout_p)
 
-        # Detection heads
-        self.cls_head = nn.Linear(self.feature_dim, num_queries * num_classes)
-        self.box_head = nn.Linear(self.feature_dim, num_queries * 4)
+        # Classification head (single prediction per crop)
+        self.cls_head = nn.Linear(self.feature_dim, num_classes)
 
         # Optionally bootstrap with ImageNet weights
         _load_vgg_backbone(
@@ -393,59 +391,43 @@ class DetectionCNN(BaseModel):
                 freeze_bn_running_stats=True,
             )
 
+        # Metric factory to create fresh Metric instances per stage
+        def _make_metrics():
+            return {
+                "acc": Accuracy(task="multiclass", num_classes=self.num_classes),
+                "precision": Precision(task="multiclass", average="macro", num_classes=self.num_classes),
+                "recall": Recall(task="multiclass", average="macro", num_classes=self.num_classes),
+            }
+
+        # Register metrics separately for each stage (don't reuse instances)
+        self.register_metrics("val", _make_metrics(), prog_bar_keys={"acc", "precision", "recall"})
+        self.register_metrics("test", _make_metrics())
+        if include_train_metrics:
+            self.register_metrics("train", _make_metrics())
+
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         feats = self.features(x)
         feats = self.spatial_pool(feats)
         flat = torch.flatten(feats, 1)
         flat = self.head_dropout(flat)
-        logits = self.cls_head(flat).view(-1, self.num_queries, self.num_classes)
-        boxes = torch.sigmoid(self.box_head(flat)).view(-1, self.num_queries, 4)
-        return {"logits": logits, "boxes": boxes}
+        logits = self.cls_head(flat)
+        return logits
 
-    @torch.no_grad()
-    def decode_predictions(
-        self,
-        outputs: dict[str, torch.Tensor],
-        *,
-        score_threshold: float = 0.25,
-    ) -> list[dict[str, torch.Tensor]]:
-        """Convert raw network outputs into prediction dicts."""
-
-        logits = outputs["logits"]
-        boxes = outputs["boxes"]
-        probs = logits.softmax(dim=-1)
-        scores, labels = probs.max(dim=-1)
-        batch_preds: list[dict[str, torch.Tensor]] = []
-        for sample_scores, sample_labels, sample_boxes in zip(scores, labels, boxes):
-            keep = sample_scores > score_threshold
-            batch_preds.append(
-                {
-                    "boxes": sample_boxes[keep],
-                    "scores": sample_scores[keep],
-                    "labels": sample_labels[keep],
-                }
-            )
-        return batch_preds
-
+    # decode_predictions removed — this model is classification-only and
+    # the training/validation loop works with logits/predictions directly.
     def _shared_step(self, batch: Any, stage: str) -> torch.Tensor:
         images, labels = batch
-        outputs = self(images)
-        logits = outputs["logits"].mean(dim=1)
+        logits = self(images)  # shape (B, num_classes)
         loss = self.criterion(logits, labels)
+
         preds = torch.argmax(logits, dim=1)
-        acc = (preds == labels).float().mean()
-        self.log(
-            f"{stage}/loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=stage != "test",
-        )
-        self.log(
-            f"{stage}/acc",
-            acc,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=stage != "test",
-        )
+        # Update registered metrics (if any)
+        try:
+            self.update_metrics(stage, preds, labels)
+        except Exception:
+            # fallback: compute simple accuracy for logging if metrics not present
+            acc = (preds == labels).float().mean()
+            self.log(f"{stage}/acc", acc, on_step=False, on_epoch=True, prog_bar=stage != "test")
+
+        self.log(f"{stage}/loss", loss, on_step=False, on_epoch=True, prog_bar=stage != "test")
         return loss

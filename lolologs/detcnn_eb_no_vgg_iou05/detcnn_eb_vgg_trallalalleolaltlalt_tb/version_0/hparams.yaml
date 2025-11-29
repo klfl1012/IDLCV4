@@ -1,0 +1,15 @@
+activation: silu
+base_channels: 64
+dataloader.iou_threshold: 0.5
+dataloader.positive_ratio: 0.25
+dropout_p: 0.1
+in_channels: 3
+include_train_metrics: false
+learning_rate: 0.001
+loss_function: cross_entropy
+metric_iou_thresholds: null
+num_classes: 2
+pretrained_vgg: false
+train_backbone: true
+vgg_variant: vgg16_bn
+weight_decay: 0.0001
